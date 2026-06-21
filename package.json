@@ -1,0 +1,11 @@
+{
+  "name": "usav-age-verification",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Front-end US ID (PDF417/AAMVA) age-verification demo with a testable parser.",
+  "scripts": {
+    "test": "node --test",
+    "serve": "node -e \"const h=require('http'),f=require('fs'),p=require('path'),t={'.html':'text/html','.css':'text/css','.js':'text/javascript','.map':'application/json'};h.createServer((q,s)=>{let u=decodeURIComponent(q.url.split('?')[0]);if(u==='/')u='/index.html';const fp=p.join(process.cwd(),u);f.readFile(fp,(e,d)=>{if(e){s.writeCode=404;s.statusCode=404;return s.end('404');}s.setHeader('Content-Type',t[p.extname(fp)]||'application/octet-stream');s.end(d);});}).listen(8000,()=>console.log('http://localhost:8000'));\""
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}

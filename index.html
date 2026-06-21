@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <!-- All scripts are local; no external/inline script execution is allowed. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" />
   <title>Age Verification &mdash; US ID Scanner</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -71,8 +75,13 @@
     </footer>
   </main>
 
-  <!-- ZXing UMD build: provides PDF417 decoding in pure JS/WASM -->
-  <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+  <!-- ZXing PDF417 decoder, vendored locally (no runtime CDN dependency).
+       SRI guards against accidental/local tampering. -->
+  <script
+    src="vendor/zxing-0.21.3.min.js"
+    integrity="sha384-BzBxP10ZE72aitqj5UMmUsbKFliP/DZqA8Wq+BNNhlIJDGoEd1tpkMYXOg9+n6sB"
+    crossorigin="anonymous"></script>
+  <script src="aamva.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

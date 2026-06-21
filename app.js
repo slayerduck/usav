@@ -1,178 +1,107 @@
 /*
- * Age verification proof-of-concept.
+ * app.js — camera capture, PDF417 decoding, and UI for the age-verification
+ * demo. Parsing/age logic lives in aamva.js so it can be unit-tested.
  *
- * Reads the PDF417 barcode on the back of a US driver's license / state ID,
- * parses the AAMVA-encoded payload, extracts the date of birth, and checks
- * whether the holder is 18 or older.
- *
- * IMPORTANT: This only reads what the barcode claims. It does NOT verify that
- * the document is authentic or that it belongs to the person presenting it.
- * Real-world age/identity verification needs server-side document authenticity
- * checks plus a liveness / face match, typically via a dedicated IDV vendor.
+ * SCOPE: this reads what the barcode claims. It does NOT verify the document
+ * is authentic or that it belongs to the holder. See README for what a real
+ * production identity/age system additionally requires.
  */
-
 (function () {
   "use strict";
 
   const MIN_AGE = 18;
 
-  // --- DOM references ----------------------------------------------------
-  const video = document.getElementById("video");
-  const startBtn = document.getElementById("startBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const fileInput = document.getElementById("fileInput");
-  const statusEl = document.getElementById("status");
-  const resultCard = document.getElementById("resultCard");
-  const verdictEl = document.getElementById("verdict");
-  const verdictIcon = document.getElementById("verdictIcon");
-  const verdictText = document.getElementById("verdictText");
-  const detailsEl = document.getElementById("details");
-  const resetBtn = document.getElementById("resetBtn");
+  const el = (id) => document.getElementById(id);
+  const video = el("video");
+  const startBtn = el("startBtn");
+  const stopBtn = el("stopBtn");
+  const fileInput = el("fileInput");
+  const statusEl = el("status");
+  const resultCard = el("resultCard");
+  const verdictEl = el("verdict");
+  const verdictIcon = el("verdictIcon");
+  const verdictText = el("verdictText");
+  const detailsEl = el("details");
+  const resetBtn = el("resetBtn");
 
-  // --- ZXing setup -------------------------------------------------------
-  // Restrict to PDF417 so the decoder is faster and less prone to false hits.
-  const hints = new Map();
+  if (typeof ZXing === "undefined") {
+    setStatus("Barcode library failed to load. Reload the page.");
+    startBtn.disabled = true;
+    return;
+  }
+
   const { BarcodeFormat, DecodeHintType, BrowserMultiFormatReader } = ZXing;
+  const hints = new Map();
   hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417]);
   hints.set(DecodeHintType.TRY_HARDER, true);
 
   const reader = new BrowserMultiFormatReader(hints);
   let scanning = false;
 
-  // --- Status helper -----------------------------------------------------
   function setStatus(message) {
     statusEl.textContent = message;
   }
 
-  // --- AAMVA parsing -----------------------------------------------------
-  // The AAMVA payload is a set of 3-letter element IDs followed by their value,
-  // one per line. We only need a handful of fields here.
-  const FIELD_LABELS = {
-    DCS: "Last name",
-    DAC: "First name",
-    DAD: "Middle name",
-    DBB: "Date of birth",
-    DBA: "Expiration date",
-    DBD: "Issue date",
-    DBC: "Sex",
-    DAQ: "License number",
+  // --- Result rendering --------------------------------------------------
+  const VERDICTS = {
+    approved: (r) => ({
+      cls: "pass",
+      icon: "✅",
+      text: `Approved — ${r.age} years old (${MIN_AGE}+)`,
+    }),
+    underage: (r) => ({
+      cls: "fail",
+      icon: "🚫",
+      text: `Denied — ${r.age} years old (under ${MIN_AGE})`,
+    }),
+    expired: (r) => ({
+      cls: "fail",
+      icon: "⚠️",
+      text: `Denied — ID expired (holder is ${r.age})`,
+    }),
+    future_dob: () => ({
+      cls: "fail",
+      icon: "⚠️",
+      text: "Invalid — date of birth is in the future",
+    }),
+    no_dob: () => ({
+      cls: "fail",
+      icon: "⚠️",
+      text: "Could not read date of birth",
+    }),
   };
 
-  function parseAamva(raw) {
-    const fields = {};
-    // Records are separated by LF (0x0A); the header uses CR/LF and the
-    // "@" / "ANSI " preamble which we can ignore for field extraction.
-    const lines = raw.split(/\r?\n/);
-    for (const line of lines) {
-      const match = line.match(/^([A-Z]{3})(.*)$/);
-      if (match) {
-        const [, code, value] = match;
-        if (!(code in fields)) {
-          fields[code] = value.trim();
-        }
-      }
-    }
-    return fields;
-  }
-
-  // AAMVA dates are MMDDCCYY (US) or CCYYMMDD (some jurisdictions / Canada).
-  // We detect which by checking for a plausible month in the leading digits.
-  function parseAamvaDate(value) {
-    if (!value || !/^\d{8}$/.test(value)) return null;
-
-    const a = value.slice(0, 4); // either MMDD or CCYY
-    const tryMMDDCCYY = () => {
-      const mm = +value.slice(0, 2);
-      const dd = +value.slice(2, 4);
-      const yyyy = +value.slice(4, 8);
-      return buildDate(yyyy, mm, dd);
-    };
-    const tryCCYYMMDD = () => {
-      const yyyy = +value.slice(0, 4);
-      const mm = +value.slice(4, 6);
-      const dd = +value.slice(6, 8);
-      return buildDate(yyyy, mm, dd);
-    };
-
-    // If the first four digits look like a year (>= 1900), prefer CCYYMMDD.
-    const looksLikeYear = +a >= 1900 && +a <= 2200;
-    const primary = looksLikeYear ? tryCCYYMMDD() : tryMMDDCCYY();
-    const fallback = looksLikeYear ? tryMMDDCCYY() : tryCCYYMMDD();
-    return primary || fallback;
-  }
-
-  function buildDate(yyyy, mm, dd) {
-    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-    if (yyyy < 1900 || yyyy > 2200) return null;
-    const d = new Date(yyyy, mm - 1, dd);
-    // Reject overflow (e.g. Feb 30 rolling into March).
-    if (d.getFullYear() !== yyyy || d.getMonth() !== mm - 1 || d.getDate() !== dd) {
-      return null;
-    }
-    return d;
-  }
-
-  function calculateAge(birthDate, on = new Date()) {
-    let age = on.getFullYear() - birthDate.getFullYear();
-    const m = on.getMonth() - birthDate.getMonth();
-    if (m < 0 || (m === 0 && on.getDate() < birthDate.getDate())) {
-      age--;
-    }
-    return age;
-  }
-
-  function formatDate(d) {
-    return d.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  }
-
-  // --- Result rendering --------------------------------------------------
   function showResult(fields) {
-    const dobRaw = fields.DBB;
-    const dob = parseAamvaDate(dobRaw);
+    const r = AAMVA.evaluate(fields, { minAge: MIN_AGE });
+    const v = (VERDICTS[r.reason] || VERDICTS.no_dob)(r);
+
+    verdictEl.className = "verdict verdict--" + v.cls;
+    verdictIcon.textContent = v.icon;
+    verdictText.textContent = v.text;
 
     detailsEl.innerHTML = "";
-
-    if (!dob) {
-      verdictEl.className = "verdict verdict--fail";
-      verdictIcon.textContent = "⚠️";
-      verdictText.textContent = "Could not read date of birth";
-      addDetail("Raw DOB field", dobRaw || "(not found)");
-      revealResult();
-      return;
-    }
-
-    const age = calculateAge(dob);
-    const isAdult = age >= MIN_AGE;
-
-    verdictEl.className = "verdict " + (isAdult ? "verdict--pass" : "verdict--fail");
-    verdictIcon.textContent = isAdult ? "✅" : "🚫";
-    verdictText.textContent = isAdult
-      ? `Approved — ${age} years old (18+)`
-      : `Denied — ${age} years old (under 18)`;
-
-    addDetail("Date of birth", formatDate(dob));
-    addDetail("Age", String(age));
-
-    // Show a few extra fields when present, for transparency.
-    const name = [fields.DAC, fields.DAD, fields.DCS]
-      .filter(Boolean)
-      .join(" ");
+    if (r.dob) addDetail("Date of birth", formatDate(r.dob));
+    if (r.age != null) addDetail("Age", String(r.age));
+    const name = AAMVA.fullName(fields);
     if (name) addDetail("Name", name);
-
-    const exp = parseAamvaDate(fields.DBA);
-    if (exp) {
-      const expired = exp < new Date();
-      addDetail("Expiration", formatDate(exp) + (expired ? " (EXPIRED)" : ""));
+    if (r.expiration) {
+      addDetail(
+        "Expiration",
+        formatDate(r.expiration) + (r.expired ? " (EXPIRED)" : "")
+      );
     }
     if (fields.DBC) {
-      addDetail("Sex", fields.DBC === "1" ? "M" : fields.DBC === "2" ? "F" : fields.DBC);
+      addDetail(
+        "Sex",
+        fields.DBC === "1" ? "M" : fields.DBC === "2" ? "F" : fields.DBC
+      );
+    }
+    if (r.reason === "no_dob") {
+      addDetail("Raw DOB field", fields.DBB || "(not found)");
     }
 
-    revealResult();
+    resultCard.hidden = false;
+    resultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function addDetail(label, value) {
@@ -183,17 +112,20 @@
     detailsEl.append(dt, dd);
   }
 
-  function revealResult() {
-    resultCard.hidden = false;
-    resultCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  function formatDate(d) {
+    return d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   }
 
   function handleDecodedText(text) {
-    const fields = parseAamva(text);
+    const fields = AAMVA.parse(text);
     if (!fields.DBB) {
       setStatus(
-        "A barcode was read, but it doesn't look like an AAMVA ID barcode. " +
-          "Make sure you're scanning the back of a US ID."
+        "A barcode was read, but it isn't an AAMVA ID barcode. Make sure " +
+          "you're scanning the back of a US driver's license / state ID."
       );
       return false;
     }
@@ -203,33 +135,54 @@
 
   // --- Camera scanning ---------------------------------------------------
   async function startCamera() {
-    setStatus("Requesting camera access…");
-    try {
-      scanning = true;
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-
-      await reader.decodeFromVideoDevice(
-        undefined, // default device; prefers environment camera where possible
-        video,
-        (result, err) => {
-          if (result && scanning) {
-            const ok = handleDecodedText(result.getText());
-            if (ok) stopCamera("Barcode read successfully.");
-          }
-          // Per-frame "not found" errors are expected; ignore them.
-        }
+    if (!window.isSecureContext) {
+      setStatus(
+        "Camera requires HTTPS (or localhost). Use the upload option, or " +
+          "serve this page over a secure connection."
       );
-      setStatus("Camera on. Center the barcode in the frame.");
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus("This browser doesn't support camera access. Use upload.");
+      return;
+    }
+
+    setStatus("Requesting camera access…");
+    scanning = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    // Prefer the rear (environment) camera at a resolution high enough to
+    // resolve a dense PDF417 barcode.
+    const constraints = {
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+    };
+
+    try {
+      await reader.decodeFromConstraints(constraints, video, (result) => {
+        if (result && scanning) {
+          if (handleDecodedText(result.getText())) {
+            stopCamera("Barcode read successfully.");
+          }
+        }
+        // Per-frame "not found" errors are expected and ignored.
+      });
+      setStatus("Camera on. Center the barcode inside the frame.");
     } catch (e) {
       scanning = false;
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      setStatus(
-        "Could not access the camera: " +
+      const msg = e && e.name === "NotAllowedError"
+        ? "Camera permission denied. You can upload a photo instead."
+        : "Could not access the camera: " +
           (e && e.message ? e.message : e) +
-          ". You can upload a photo instead."
-      );
+          ". You can upload a photo instead.";
+      setStatus(msg);
     }
   }
 
@@ -242,43 +195,40 @@
     }
     startBtn.disabled = false;
     stopBtn.disabled = true;
-    if (message) setStatus(message);
-    else setStatus("Camera stopped.");
+    setStatus(message || "Camera stopped.");
   }
 
   // --- File upload path --------------------------------------------------
   async function handleFile(file) {
     if (!file) return;
-    stopCamera();
+    stopCamera("");
     setStatus("Decoding image…");
     const url = URL.createObjectURL(file);
     try {
       const result = await reader.decodeFromImageUrl(url);
-      const ok = handleDecodedText(result.getText());
-      if (ok) setStatus("Barcode read successfully.");
-    } catch (e) {
+      if (handleDecodedText(result.getText())) {
+        setStatus("Barcode read successfully.");
+      }
+    } catch (_) {
       setStatus(
-        "No PDF417 barcode found in that image. Try a sharper, well-lit photo " +
-          "of the back of the ID."
+        "No PDF417 barcode found in that image. Try a sharper, well-lit, " +
+          "straight-on photo of the back of the ID."
       );
     } finally {
       URL.revokeObjectURL(url);
+      fileInput.value = ""; // allow re-selecting the same file
     }
   }
 
-  // --- Reset -------------------------------------------------------------
   function reset() {
     resultCard.hidden = true;
     detailsEl.innerHTML = "";
     setStatus("Ready. Start the camera or upload a photo.");
   }
 
-  // --- Wire up events ----------------------------------------------------
   startBtn.addEventListener("click", startCamera);
   stopBtn.addEventListener("click", () => stopCamera("Camera stopped."));
   fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
   resetBtn.addEventListener("click", reset);
-
-  // Expose date helpers for ad-hoc testing in the console / unit checks.
-  window.__ageVerify = { parseAamva, parseAamvaDate, calculateAge };
+  window.addEventListener("pagehide", () => stopCamera(""));
 })();

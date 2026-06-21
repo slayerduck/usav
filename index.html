@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Age Verification &mdash; US ID Scanner</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app__header">
+      <h1>Age Verification</h1>
+      <p class="app__subtitle">
+        Scan the <strong>PDF417 barcode</strong> on the back of a US driver's
+        license or state ID to check if you are 18 or older.
+      </p>
+    </header>
+
+    <section class="card" aria-labelledby="scan-heading">
+      <h2 id="scan-heading" class="card__title">1. Scan the barcode</h2>
+
+      <div class="scanner">
+        <video id="video" class="scanner__video" playsinline muted></video>
+        <div class="scanner__overlay" aria-hidden="true">
+          <div class="scanner__frame"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" class="btn btn--primary" type="button">
+          Start camera
+        </button>
+        <button id="stopBtn" class="btn" type="button" disabled>
+          Stop camera
+        </button>
+
+        <label class="btn btn--ghost" for="fileInput">
+          Upload photo instead
+        </label>
+        <input id="fileInput" class="visually-hidden" type="file"
+               accept="image/*" />
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite">
+        Camera is off. Press &ldquo;Start camera&rdquo; and hold the back of the
+        ID inside the frame.
+      </p>
+    </section>
+
+    <section id="resultCard" class="card card--result" hidden
+             aria-labelledby="result-heading">
+      <h2 id="result-heading" class="card__title">2. Result</h2>
+
+      <div id="verdict" class="verdict">
+        <span id="verdictIcon" class="verdict__icon"></span>
+        <span id="verdictText" class="verdict__text"></span>
+      </div>
+
+      <dl id="details" class="details"></dl>
+
+      <button id="resetBtn" class="btn" type="button">Scan another ID</button>
+    </section>
+
+    <footer class="app__footer">
+      <p>
+        <strong>Demo / proof-of-concept only.</strong> This reads the data
+        encoded in the barcode &mdash; it does <em>not</em> confirm the ID is
+        authentic or that it belongs to the holder. All processing happens
+        locally in your browser; no data is uploaded.
+      </p>
+    </footer>
+  </main>
+
+  <!-- ZXing UMD build: provides PDF417 decoding in pure JS/WASM -->
+  <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
